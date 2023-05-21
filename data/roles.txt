@@ -1,0 +1,15 @@
+1. Lead vocalist
+2. Backup vocalist
+3. Lead guitarist
+4. Rhythm guitarist
+5. Bassist
+6. Drummer
+7. Keyboardist
+8. Percussionist
+9. Brass section player
+10. Woodwind section player
+11. String section player
+12. Arranger
+13. Producer
+14. Sound engineer
+15. Songwriter
