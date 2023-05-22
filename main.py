@@ -8,12 +8,19 @@ from faker.providers import DynamicProvider
 import time
 import os.path
 from config import user, password, host, port, database
-from db_cw_create import db_cw_create
+import queries_and_views
+import fk_tables_filling
 
 start_time = time.time()
+connection = None
 
 
-def create_provider_and_upload_data(provider_name: str, path: str, cursor):
+def db_create(cursor):
+    with open('bd_create_script.sql', 'r') as f:
+        cursor.execute(f.read())
+
+
+def create_provider_and_upload_data(provider_name: str, path: str, cursor, fake):
     '''
         provider_name - название нового провайдера faker
         path - путь до файла .txt с данными для добавления в таблицу (название файла - название соответствующей таблицы)
@@ -56,7 +63,7 @@ def create_provider_and_upload_data(provider_name: str, path: str, cursor):
     return DynamicProvider(provider_name=provider_name, elements=temp)
 
 
-if (__name__ == '__main__'):
+def main():
     try:
         # Подключение к существующей базе данных
         connection = psycopg2.connect(
@@ -73,106 +80,30 @@ if (__name__ == '__main__'):
         with connection.cursor() as cursor:
 
             # Создаём таблицы БД по заранее составленному SQL скрипту
-            db_cw_create(cursor)
+            db_create(cursor)
 
+            # Непосредственное заполнение БД
             # Загрузка данных в некоторые таблицы бд и создание провайдеров для работы модуля faker
             fake = Faker()
-            fake.add_provider(create_provider_and_upload_data('album', 'data/albums.txt', cursor))
-            fake.add_provider(create_provider_and_upload_data('type_of_ensemble', 'data/types_of_ensemble.txt', cursor))
-            fake.add_provider(create_provider_and_upload_data('musical_instrument', 'data/musical_instruments.txt', cursor))
-            fake.add_provider(create_provider_and_upload_data('musician', 'data/musicians.txt', cursor))
-            fake.add_provider(create_provider_and_upload_data('role', 'data/roles.txt', cursor))
-            # Эти провайдерам при создании используют некоторые провайдеры выше (нужно , чтобы он уже были созданы, поэтому провайдеры musical_work и ensemble создаём в последнюю очередь)
-            fake.add_provider(create_provider_and_upload_data('musical_work', 'data/musical_works.txt', cursor))
-            fake.add_provider(create_provider_and_upload_data('ensemble', 'data/ensembles.txt', cursor))
-
+            fake.add_provider(create_provider_and_upload_data('album', 'data/albums.txt', cursor, fake))
+            fake.add_provider(create_provider_and_upload_data('type_of_ensemble', 'data/types_of_ensemble.txt', cursor, fake))
+            fake.add_provider(create_provider_and_upload_data('musical_instrument', 'data/musical_instruments.txt', cursor, fake))
+            fake.add_provider(create_provider_and_upload_data('musician', 'data/musicians.txt', cursor, fake))
+            fake.add_provider(create_provider_and_upload_data('role', 'data/roles.txt', cursor, fake))
+            # Эти провайдеры при создании используют некоторые провайдеры выше (нужно, чтобы он уже были созданы, поэтому провайдеры musical_work и ensemble создаём в последнюю очередь)
+            fake.add_provider(create_provider_and_upload_data('musical_work', 'data/musical_works.txt', cursor, fake))
+            fake.add_provider(create_provider_and_upload_data('ensemble', 'data/ensembles.txt', cursor, fake))
             # Заполнение оставшихся 3х таблиц: musicians_and_ensembles, Recordings, Instruments_of_the_performer_of_a_musical_work
-
             # Добавляем 15 рандомно сгенерированных записей в таблицу musicians_and_ensembles
-            for i in range(15):
-                cursor.execute('''
-                    SELECT musician_id FROM musicians WHERE name = %s;
-                ''', (fake.musician(),))
-                # id случайной записи из таблицы musicians
-                random_musician_id = int(cursor.fetchone()[0])
-
-                cursor.execute('''
-                    SELECT ensemble_id FROM ensembles WHERE name = %s;
-                ''', (fake.ensemble(),))
-                # id случайной записи из таблицы ensembles
-                random_ensemble_id = int(cursor.fetchone()[0])
-
-                cursor.execute('''
-                    SELECT role_id FROM roles WHERE name = %s;
-                ''', (fake.role(),))
-                # id случайной записи из таблицы roles
-                random_role_id = int(cursor.fetchone()[0])
-
-                # добавляем запись в таблицу musicians_and_ensembles
-                cursor.execute('''
-                    INSERT INTO musicians_and_ensembles (musician, ensemble, role) VALUES (%s, %s, %s);
-                ''', (random_musician_id, random_ensemble_id, random_role_id))
-
+            fk_tables_filling.fill_in_musicians_and_ensembles(15, cursor, fake)
+            # Добавляем 1500 рандомно сгенерированных записей в таблицу musicians_and_ensembles
+            fk_tables_filling.fill_in_recordings(1500, cursor, fake)
             # Добавляем 15 рандомно сгенерированных записей в таблицу instruments_of_the_performer_of_a_musical_work
-            for i in range(15):
-                cursor.execute('''
-                    SELECT musician_id FROM musicians WHERE name = %s;
-                ''', (fake.musician(),))
-                # id случайной записи из таблицы musicians
-                random_musician_id = int(cursor.fetchone()[0])
+            fk_tables_filling.fill_in_musicians_and_ensembles(15, cursor, fake)
 
-                cursor.execute('''
-                    SELECT musical_work_id FROM musical_works WHERE name = %s;
-                ''', (fake.musical_work(),))
-                # id случайной записи из таблицы musical_works
-                random_musical_work_id = int(cursor.fetchone()[0])
-
-                cursor.execute('''
-                    SELECT musical_instrument_id FROM musical_instruments WHERE name = %s;
-                ''', (fake.musical_instrument(),))
-                # id случайной записи из таблицы musical_instruments
-                random_musical_instrument_id = int(cursor.fetchone()[0])
-
-                # добавляем запись в таблицу instruments_of_the_performer_of_a_musical_work
-                cursor.execute('''
-                    INSERT INTO instruments_of_the_performer_of_a_musical_work (musician, musical_work, musical_instrument) VALUES (%s, %s, %s);
-                ''', (random_musician_id, random_musical_work_id, random_musical_instrument_id))
-
-            # Добавляем 100000 рандомно сгенерированных записей в таблицу recordings
-            for i in range(100000):
-                cursor.execute('''
-                    SELECT musical_work_id FROM musical_works WHERE name = %s;
-                ''', (fake.musical_work(),))
-                # id случайной записи из таблицы musical_works
-                random_musical_work_id = int(cursor.fetchone()[0])
-
-                cursor.execute('''
-                    SELECT ensemble_id FROM ensembles WHERE name = %s;
-                ''', (fake.ensemble(),))
-                # id случайной записи из таблицы ensembles
-                random_ensemble_id = int(cursor.fetchone()[0])
-
-                cursor.execute('''
-                    SELECT album_id FROM albums WHERE name = %s;
-                ''', (fake.album(),))
-                # id случайной записи из таблицы albums
-                random_album_id = int(cursor.fetchone()[0])
-
-                # добавляем запись в таблицу recordings
-                cursor.execute('''
-                    INSERT INTO recordings (musical_work, ensemble, album) VALUES (%s, %s, %s);
-                ''', (random_musical_work_id, random_ensemble_id, random_album_id))
-
-            # querySelect_musicians_and_ensembles = '''SELECT * FROM recordings, musical_works, ensembles, albums WHERE
-            #                                         recordings.musical_work = musical_works.musical_work_id
-            #                                         AND recordings.ensemble = ensembles.ensemble_id
-            #                                         AND recordings.album = albums.album_id;'''
-            # cursor.execute(querySelect_musicians_and_ensembles)
-            # output_data = cursor.fetchall()
-            # print('SQL command:', querySelect_musicians_and_ensembles)
-            # for tstr in output_data:
-            #     print(*tstr)
-            # print('End of output.')
+            # Выполнить сложные запросы
+            queries_and_views.main(cursor)
+            # Выполнить сложные отчёты: views (представления)
 
     except (Exception, Error) as error:
         print("Ошибка при работе с PostgreSQL", error)
@@ -183,3 +114,6 @@ if (__name__ == '__main__'):
             print("Соединение с PostgreSQL закрыто")
 
     print("--- %s seconds ---" % (time.time() - start_time))
+
+
+main()
