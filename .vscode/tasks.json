@@ -14,7 +14,37 @@
             "presentation": {
                 "clear": true
             },
-            "detail": "Build .py",
+            "detail": "Build .py"
+        },
+        {
+            "label": "presentation clear",
+            "type": "shell",
+            "command": "echo 'Task beginning.'",
+            "presentation": {
+                "clear": true
+            }
+        },
+        {
+            "label": ".ui -> .py convert (component)",
+            "type": "shell",
+            "command": "pyuic5 ${file} -o ${fileDirname}/${fileBasenameNoExtension}.py",
+        },
+        {
+            "label": "kcombobox error solver",
+            "type": "shell",
+            "command": "python3 ./kcombobox_error_solver.py ${fileDirname}/${fileBasenameNoExtension}.py",
+            "detail": "Using kcombobox_error_solver.py"
+        },
+        {
+            "label": ".ui -> .py convert",
+            "group": "build",
+            "dependsOn": [
+                "presentation clear",
+                ".ui -> .py convert (component)",
+                "kcombobox error solver"
+            ],
+            "dependsOrder": "sequence",
+            "detail": "Qt Designer problem solver"
         }
     ]
 }

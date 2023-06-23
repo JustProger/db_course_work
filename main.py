@@ -1,119 +1,245 @@
+# Qt
+from PyQt5 import QtWidgets, QtGui, QtCore
+from mydesign import Ui_MainWindow  # импорт нашего сгенерированного файла
+
+# Databases, Psycopg2
 import psycopg2
 from psycopg2 import Error
 from psycopg2 import sql
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from faker import Faker
-from faker.providers import DynamicProvider
 
+# python modules
+import logging
 import time
-import os.path
-from config import user, password, host, port, database
-import queries_and_views
-import fk_tables_filling
+import sys
 
-start_time = time.time()
-connection = None
+# config файл
+import config
+# from config import user, password, host, port, database, musicians_and_ensembles_num, recordings_num, instruments_of_the_performer_of_a_musical_work_num
 
 
-def db_create(cursor):
-    with open('bd_create_script.sql', 'r') as f:
-        cursor.execute(f.read())
+class MessageBox(QtWidgets.QDialog):
+
+    def __init__(self):
+        super().__init__()
+
+        # Кнопки
+        self.buttonBox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
+        self.buttonBox.accepted.connect(lambda: self.close())
+        # Строка с сообщением
+        self.message = QtWidgets.QLabel("Default string")
+
+        # Макет
+        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.addWidget(self.message)
+        self.layout.addWidget(self.buttonBox)
 
 
-def create_provider_and_upload_data(provider_name: str, path: str, cursor, fake):
-    '''
-        provider_name - название нового провайдера faker
-        path - путь до файла .txt с данными для добавления в таблицу (название файла - название соответствующей таблицы)
-        cur - объект типа psycopg2.cursor (для выполнения SQL команд на бд)
-    '''
+class TableMessageBox(QtWidgets.QDialog):
 
-    # массив для хранения строк файла
-    # path - путь до файла .txt
-    table_name = os.path.basename(os.path.splitext(path)[0])
-    temp = []
+    def __init__(self):
+        super().__init__()
 
-    if (table_name == 'ensembles'):
-        with open(path, 'r') as f:
-            while (tstr := f.readline()):
-                processed_tstr = '. '.join((tstr.split('\n')[0].split('. '))[1:])
-                cursor.execute('''SELECT type_of_ensemble_id FROM types_of_ensemble WHERE name = %s LIMIT 1;''', (fake.type_of_ensemble(),))
-                random_type_of_ensemble_id = int(cursor.fetchone()[0])
-                cursor.execute('''INSERT INTO ensembles (name, type_of_ensemble) VALUES (%s, %s);
-                            ''', (processed_tstr, random_type_of_ensemble_id))
-                temp.append(processed_tstr)
+        # Кнопки
+        self.buttonBox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
+        self.buttonBox.accepted.connect(lambda: self.close())
+        # Таблица
+        self.tableWidget = QtWidgets.QTableWidget()
 
-    elif (table_name == 'musical_works'):
-        with open(path, 'r') as f:
-            while (tstr := f.readline()):
-                processed_tstr = '. '.join((tstr.split('\n')[0].split('. '))[1:])
-                cursor.execute('''SELECT musician_id FROM musicians WHERE name = %s LIMIT 1;''', (fake.musician(),))
-                random_musician_id = int(cursor.fetchone()[0])
-                cursor.execute('''INSERT INTO musical_works (name, author) VALUES (%s, %s);
-                            ''', (processed_tstr, random_musician_id))
-                temp.append(processed_tstr)
+        # Макет
+        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.addWidget(self.tableWidget)
+        self.layout.addWidget(self.buttonBox)
 
-    else:
-        with open(path, 'r') as f:
-            while (tstr := f.readline()):
-                processed_tstr = '. '.join((tstr.split('\n')[0].split('. '))[1:])
-                cursor.execute(sql.SQL('''INSERT INTO {table} (name) VALUES (%s);
-                            ''').format(table=sql.Identifier(table_name)), (processed_tstr,))
-                temp.append(processed_tstr)
 
-    return DynamicProvider(provider_name=provider_name, elements=temp)
+class mywindow(QtWidgets.QMainWindow):
+
+    def __init__(self, cursor):
+        super(mywindow, self).__init__()
+        self.cursor = cursor
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+
+        # Изменение шрифта
+        self.ui.label.setFont(QtGui.QFont('SansSerif'))
+        self.ui.label_2.setFont(QtGui.QFont('SansSerif'))
+        self.ui.label_3.setFont(QtGui.QFont('SansSerif'))
+
+        # Установление слотов для кнопок
+        self.ui.pushButton.clicked.connect(lambda: self.pushButtonClicked())
+        self.ui.pushButton_2.clicked.connect(lambda: self.pushButton_2Clicked())
+        self.ui.pushButton_3.clicked.connect(lambda: self.pushButton_3Clicked())
+        self.ui.pushButton_4.clicked.connect(lambda: self.pushButton_4Clicked())
+
+        # Добавление записей таблицы ensembles в kcombobox и kcombobox_2
+        ensembles_names = self.select_names_from('ensembles')
+        self.ui.kcombobox.addItems(ensembles_names)
+        self.ui.kcombobox_2.addItems(ensembles_names)
+        # Добавление записей таблицы albums в kcombobox_3
+        self.ui.kcombobox_3.addItems(self.select_names_from('albums'))
+
+        self.ui.verticalLayoutWidget.adjustSize()
+        self.ui.verticalLayoutWidget_2.adjustSize()
+        self.ui.verticalLayoutWidget_3.adjustSize()
+        self.ui.verticalLayoutWidget_4.adjustSize()
+
+    def errorMessageBox(self, text, windowTitle="Ошибка!"):
+        msg = QtWidgets.QMessageBox()
+        msg.setIcon(QtWidgets.QMessageBox.Critical)
+        msg.setWindowTitle(windowTitle)
+        msg.setText(text)
+        msg.exec()
+
+    def checkAlbumName(self, albumName):
+        '''Проверить, существует ли в БД альбом с именем albumName.
+            Также проверить длину этого имени'''
+
+        result = True
+
+        # Проверим, нет ли альбома с таким именем
+        self.cursor.execute('''SELECT name FROM albums;''')
+        albumNames = self.cursor.fetchall()
+
+        for i in albumNames:
+            if i[0] == albumName:
+                # Вывести окно с ошибкой
+                self.errorMessageBox("Название альбома не должно совпадать с уже имеющимися в базе данных")
+                result = False
+                break
+
+        # albumNewName должен быть длиной минимум 2 символа
+        if len(albumName) < 2:
+            self.errorMessageBox("Название альбома должно быть не меньше 2 символов")
+            result = False
+
+        return result
+
+    def pushButtonClicked(self):
+        '''Выводит количество музыкальных произведений (записей) заданного ансамбля'''
+
+        kcombobox_cur_text = self.ui.kcombobox.currentText()  # какой элемент был выбран?
+        # processed_str - это обработанное название выбранного элемента kcombobox
+        processed_str = '. '.join((kcombobox_cur_text.split('\n')[0].split('. '))[1:])
+
+        # SQL код
+        self.cursor.execute('''SELECT COUNT(*) FROM recordings, ensembles WHERE
+                                                                    recordings.ensemble = ensembles.ensemble_id
+                                                                    AND ensembles.name = %s;''', (processed_str,))
+
+        # Вывод результата: это кол-во записей (один кортеж)
+        # Создание информационного окна
+        dlg = MessageBox()
+        dlg.setWindowTitle("Количество музыкальных произведений (записей) заданного ансамбля")
+        dlg.message.setText(str(self.cursor.fetchone()[0]))
+
+        dlg.exec()
+
+    def pushButton_2Clicked(self):
+        '''Выводит названия всех альбомов заданного ансамбля'''
+
+        kcombobox_2_cur_text = self.ui.kcombobox_2.currentText()  # какой элемент был выбран?
+        processed_str = '. '.join((kcombobox_2_cur_text.split('\n')[0].split('. '))[1:])
+
+        # SQL код
+        self.cursor.execute('''SELECT DISTINCT(albums.name) FROM ensembles, recordings, albums
+                            WHERE recordings.ensemble = ensembles.ensemble_id
+                            AND recordings.album = albums.album_id
+                            AND ensembles.name = %s;''', (processed_str,))
+
+        # Вывод результата: это записи в виде таблицы
+        output = self.cursor.fetchall()
+        # Создание информационного окна с таблицей
+        dlg = TableMessageBox()
+        # Конфигурирование окна
+        dlg.setWindowTitle("Названия всех альбомов заданного ансамбля")
+        dlg.tableWidget.setColumnCount(1)
+        dlg.tableWidget.setRowCount(len(output))
+        row = 0
+        for i in output:
+            dlg.tableWidget.setItem(row, 0, QtWidgets.QTableWidgetItem(i[0]))
+            row += 1
+
+        dlg.exec()
+
+    def pushButton_3Clicked(self):
+        '''Изменяет название альбома'''
+
+        kcombobox_3_cur_text = self.ui.kcombobox_3.currentText()  # какой элемент был выбран?
+        processed_str = '. '.join((kcombobox_3_cur_text.split('\n')[0].split('. '))[1:])
+        albumNewName = self.ui.lineEdit.text()
+
+        # Проверим название альбома
+        if self.checkAlbumName(albumNewName):
+            # SQL код, изменяющий название альбома
+            self.cursor.execute('''UPDATE albums SET name = %s WHERE name = %s;''', (albumNewName, processed_str))
+            # Очистить lineEdit
+            self.ui.lineEdit.clear()
+            # Обновить список в kcombobox_3
+            self.ui.kcombobox_3.clear()
+            self.ui.kcombobox_3.addItems(self.select_names_from('albums'))
+
+    def pushButton_4Clicked(self):
+        '''Добавляет новый альбом'''
+
+        newAlbum = self.ui.lineEdit_2.text()
+
+        # Проверим название альбома
+        if self.checkAlbumName(newAlbum):
+            # SQL код, изменяющий название альбома
+            self.cursor.execute('''INSERT INTO albums (name) VALUES (%s);''', (newAlbum,))
+            # Очистить lineEdit
+            self.ui.lineEdit_2.clear()
+            # Обновить список в kcombobox_3
+            self.ui.kcombobox_3.clear()
+            self.ui.kcombobox_3.addItems(self.select_names_from('albums'))
+
+    def select_names_from(self, table_name):
+        '''
+            Возвращает list пронумерованных (номер + '. ' + name) значений поля name из таблицы table_name (таблица table_name должна содержать поле name).
+        '''
+        self.cursor.execute(sql.SQL('''SELECT name FROM {table};''').format(table=sql.Identifier(table_name)))
+        output_data = []
+        j = 0
+        for i in self.cursor.fetchall():
+            j += 1
+            output_data.append('. '.join([str(j), i[0]]))
+        return output_data
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
+
+    app_exit_code = 0
+
     try:
         # Подключение к существующей базе данных
         connection = psycopg2.connect(
-            user=user,
-            # пароль, который указали при установке PostgreSQL
-            password=password,
-            host=host,
-            port=port,
-            database=database)
-
-        connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-
+            user=config.user,
+            # пароль user'а
+            password=config.password,
+            host=config.host,
+            port=config.port,
+            database=config.database)
+        # Автокоммит?
+        # connection.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
         # Курсор для выполнения операций с базой данных
-        with connection.cursor() as cursor:
+        cursor = connection.cursor()
 
-            # Создаём таблицы БД по заранее составленному SQL скрипту
-            db_create(cursor)
+        app = QtWidgets.QApplication([])
+        application = mywindow(cursor)
+        application.show()
 
-            # Непосредственное заполнение БД
-            # Загрузка данных в некоторые таблицы бд и создание провайдеров для работы модуля faker
-            fake = Faker()
-            fake.add_provider(create_provider_and_upload_data('album', 'data/albums.txt', cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('type_of_ensemble', 'data/types_of_ensemble.txt', cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('musical_instrument', 'data/musical_instruments.txt', cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('musician', 'data/musicians.txt', cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('role', 'data/roles.txt', cursor, fake))
-            # Эти провайдеры при создании используют некоторые провайдеры выше (нужно, чтобы он уже были созданы, поэтому провайдеры musical_work и ensemble создаём в последнюю очередь)
-            fake.add_provider(create_provider_and_upload_data('musical_work', 'data/musical_works.txt', cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('ensemble', 'data/ensembles.txt', cursor, fake))
-            # Заполнение оставшихся 3х таблиц: musicians_and_ensembles, Recordings, Instruments_of_the_performer_of_a_musical_work
-            # Добавляем 15 рандомно сгенерированных записей в таблицу musicians_and_ensembles
-            fk_tables_filling.fill_in_musicians_and_ensembles(15, cursor, fake)
-            # Добавляем 1500 рандомно сгенерированных записей в таблицу musicians_and_ensembles
-            fk_tables_filling.fill_in_recordings(1500, cursor, fake)
-            # Добавляем 15 рандомно сгенерированных записей в таблицу instruments_of_the_performer_of_a_musical_work
-            fk_tables_filling.fill_in_musicians_and_ensembles(15, cursor, fake)
-
-            # Выполнить сложные запросы
-            queries_and_views.main(cursor)
-            # Выполнить сложные отчёты: views (представления)
+        app_exit_code = app.exec()
 
     except (Exception, Error) as error:
-        print("Ошибка при работе с PostgreSQL", error)
+        logging.info(f"Ошибка! - {error}")
     finally:
         if connection:
+            cursor.close()
             connection.close()
-            print("-------------------------------")
-            print("Соединение с PostgreSQL закрыто")
+            logging.info("Соединение с PostgreSQL закрыто")
 
-    print("--- %s seconds ---" % (time.time() - start_time))
+    sys.exit(app_exit_code)
 
 
-main()
+if __name__ == '__main__':
+    main()
