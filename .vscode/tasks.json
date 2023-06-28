@@ -7,10 +7,7 @@
             "label": "Py",
             "type": "shell",
             "command": "python3 ${file}",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
+            "group": "build",
             "presentation": {
                 "clear": true
             },
@@ -27,13 +24,12 @@
         {
             "label": ".ui -> .py convert (component)",
             "type": "shell",
-            "command": "pyuic5 ${file} -o ${fileDirname}/${fileBasenameNoExtension}.py",
+            "command": "pyuic5 ${workspaceFolder}/mydesign.ui -o ${workspaceFolder}/mydesign.py",
         },
         {
             "label": "kcombobox error solver",
             "type": "shell",
-            "command": "python3 ./kcombobox_error_solver.py ${fileDirname}/${fileBasenameNoExtension}.py",
-            "detail": "Using kcombobox_error_solver.py"
+            "command": "python3 ${workspaceFolder}/kcombobox_error_solver.py ${workspaceFolder}/mydesign.py",
         },
         {
             "label": ".ui -> .py convert",
@@ -45,6 +41,19 @@
             ],
             "dependsOrder": "sequence",
             "detail": "Qt Designer problem solver"
+        },
+        {
+            "label": "DB Course Work project",
+            "type": "shell",
+            "command": "python3 ${workspaceFolder}/main.py",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                ".ui -> .py convert"
+            ],
+            "detail": "Build DB Course Work project"
         }
     ]
 }

@@ -1,3 +1,4 @@
+# psycopg2
 import psycopg2
 from psycopg2 import Error
 from psycopg2 import sql
@@ -5,22 +6,22 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from faker import Faker
 from faker.providers import DynamicProvider
 
+# python modules
+import logging
 import time
 import os.path
 import sys
 
-script_dir = os.path.dirname(__file__)  #<-- absolute dir the script is in
-sys.path.append(os.path.join(script_dir, '../'))  # добавление папки с файлом config в список каталогов, в которых Pyton ищет файлы, исполняемые скрипты и т. д.
-from config import user, password, host, port, database, musicians_and_ensembles_num, recordings_num, instruments_of_the_performer_of_a_musical_work_num
-import queries_and_views
+# project modules
+SCRIPT_DIR = os.path.dirname(__file__)  #<-- absolute dir the script is in
+sys.path.append(os.path.join(SCRIPT_DIR, '../'))  # добавление папки с файлом config в список каталогов, в которых Pyton ищет файлы, исполняемые скрипты и т. д.
+import config
+
 import fk_tables_filling
 
-start_time = time.time()
-connection = None
 
-
-def db_create(cursor):
-    with open(os.path.join(script_dir, 'bd_create_script.sql'), 'r') as f:
+def db_tables_write(cursor):
+    with open(os.path.join(SCRIPT_DIR, 'bd_create_script.sql'), 'r') as f:
         cursor.execute(f.read())
 
 
@@ -68,62 +69,72 @@ def create_provider_and_upload_data(provider_name: str, path: str, cursor, fake)
     return DynamicProvider(provider_name=provider_name, elements=temp)
 
 
-def main():
+def main(cursor=None):  # cursor - либо экземпляр класса psycopg2.cursor, либо None
+    '''
+        Если передали в функцию экземпляр класса psycopg2.cursor (заранее созданный для работы с конкретной БД), то программа через него заполнит БД.
+        Если передали ничего или что-то, кроме экземпляра класса psycopg2.cursor, тогда создаётся подключение самостоятельно
+    '''
+
+    start_time = time.time()
+
+    logging.basicConfig(level=logging.INFO)
+
+    connection = None
+
     try:
-        # Подключение к существующей базе данных
-        connection = psycopg2.connect(
-            user=user,
-            # пароль, который указали при установке PostgreSQL
-            password=password,
-            host=host,
-            port=port,
-            database=database)
+        if cursor == None:
+            # Подключение к существующей базе данных
+            connection = psycopg2.connect(
+                user=config.USER,
+                # пароль, который указали при установке PostgreSQL
+                password=config.PASSWORD,
+                host=config.HOST,
+                port=config.PORT,
+                database=config.DATABASE)
+            connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            # Курсор для выполнения операций с базой данных
+            cursor = connection.cursor()
 
-        connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        # Создаём таблицы БД по заранее составленному SQL скрипту
+        db_tables_write(cursor)
 
-        # Курсор для выполнения операций с базой данных
-        with connection.cursor() as cursor:
+        # Непосредственное заполнение БД
+        # Загрузка данных в некоторые таблицы бд и создание провайдеров для работы модуля faker
+        fake = Faker()
+        fake.add_provider(create_provider_and_upload_data('album', os.path.join(SCRIPT_DIR, '../data/albums.txt'), cursor, fake))
+        fake.add_provider(create_provider_and_upload_data('type_of_ensemble', os.path.join(SCRIPT_DIR, '../data/types_of_ensemble.txt'), cursor, fake))
+        fake.add_provider(create_provider_and_upload_data('musical_instrument', os.path.join(SCRIPT_DIR, '../data/musical_instruments.txt'), cursor, fake))
+        fake.add_provider(create_provider_and_upload_data('musician', os.path.join(SCRIPT_DIR, '../data/musicians.txt'), cursor, fake))
+        fake.add_provider(create_provider_and_upload_data('role', os.path.join(SCRIPT_DIR, '../data/roles.txt'), cursor, fake))
 
-            # Создаём таблицы БД по заранее составленному SQL скрипту
-            db_create(cursor)
+        # Эти провайдеры при создании используют некоторые провайдеры выше (нужно, чтобы он уже были созданы, поэтому провайдеры musical_work и ensemble создаём в последнюю очередь)
+        fake.add_provider(create_provider_and_upload_data('musical_work', os.path.join(SCRIPT_DIR, '../data/musical_works.txt'), cursor, fake))
+        fake.add_provider(create_provider_and_upload_data('ensemble', os.path.join(SCRIPT_DIR, '../data/ensembles.txt'), cursor, fake))
 
-            # Непосредственное заполнение БД
-            # Загрузка данных в некоторые таблицы бд и создание провайдеров для работы модуля faker
-            fake = Faker()
-            fake.add_provider(create_provider_and_upload_data('album', os.path.join(script_dir, '../data/albums.txt'), cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('type_of_ensemble', os.path.join(script_dir, '../data/types_of_ensemble.txt'), cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('musical_instrument', os.path.join(script_dir, '../data/musical_instruments.txt'), cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('musician', os.path.join(script_dir, '../data/musicians.txt'), cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('role', os.path.join(script_dir, '../data/roles.txt'), cursor, fake))
+        # Заполнение оставшихся 3х таблиц: musicians_and_ensembles, Recordings, Instruments_of_the_performer_of_a_musical_work
 
-            # Эти провайдеры при создании используют некоторые провайдеры выше (нужно, чтобы он уже были созданы, поэтому провайдеры musical_work и ensemble создаём в последнюю очередь)
-            fake.add_provider(create_provider_and_upload_data('musical_work', os.path.join(script_dir, '../data/musical_works.txt'), cursor, fake))
-            fake.add_provider(create_provider_and_upload_data('ensemble', os.path.join(script_dir, '../data/ensembles.txt'), cursor, fake))
+        # Добавляем musicians_and_ensembles_num рандомно сгенерированных записей в таблицу musicians_and_ensembles
+        fk_tables_filling.fill_in_musicians_and_ensembles(config.MUSICIANS_AND_ENSEMBLES, cursor, fake)
 
-            # Заполнение оставшихся 3х таблиц: musicians_and_ensembles, Recordings, Instruments_of_the_performer_of_a_musical_work
+        # Добавляем recordings_num рандомно сгенерированных записей в таблицу musicians_and_ensembles
+        fk_tables_filling.fill_in_recordings(config.RECORDINGS_NUM, cursor, fake)
 
-            # Добавляем musicians_and_ensembles_num рандомно сгенерированных записей в таблицу musicians_and_ensembles
-            fk_tables_filling.fill_in_musicians_and_ensembles(musicians_and_ensembles_num, cursor, fake)
-
-            # Добавляем recordings_num рандомно сгенерированных записей в таблицу musicians_and_ensembles
-            fk_tables_filling.fill_in_recordings(recordings_num, cursor, fake)
-
-            # Добавляем instruments_of_the_performer_of_a_musical_work_num рандомно сгенерированных записей в таблицу instruments_of_the_performer_of_a_musical_work
-            fk_tables_filling.fill_in_instruments_of_the_performer_of_a_musical_work(instruments_of_the_performer_of_a_musical_work_num, cursor, fake)
-
-            # Выполнить сложные запросы
-            queries_and_views.main(cursor)
-            # Выполнить сложные отчёты: views (представления)
+        # Добавляем instruments_of_the_performer_of_a_musical_work_num рандомно сгенерированных записей в таблицу instruments_of_the_performer_of_a_musical_work
+        fk_tables_filling.fill_in_instruments_of_the_performer_of_a_musical_work(config.INSTRUMENTS_OF_THE_PERFORMER_OF_A_MUSICAL_WORK_NUM, cursor, fake)
 
     except (Exception, Error) as error:
-        print("Ошибка при работе с PostgreSQL", error)
+        logging.info(f"Ошибка! - {error}")
     finally:
         if connection:
             connection.close()
-            print("-------------------------------")
-            print("Соединение с PostgreSQL закрыто")
+            cursor.close()
+            logging.info("Соединение с PostgreSQL закрыто")
 
-    print("Время выполнения --- %s seconds ---" % (time.time() - start_time))
+    total_time = time.time() - start_time
+
+    logging.info("Время выполнения --- %s seconds ---" % (total_time))
+
+    return total_time
 
 
 if __name__ == '__main__':
